@@ -16,7 +16,7 @@ Installation
 
 You can also install the in-development version with::
 
-    pip install git+ssh://git@https://github.com/seb5433/whisperpy/seb5433/whisperpy.git@main
+    pip install git+ssh://git@github.com:seb5433/whisperpy.git
 
 Documentation
 =============
