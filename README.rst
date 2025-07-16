@@ -104,7 +104,28 @@ Get your token from: https://huggingface.co/settings/tokens
 * ``-o, --output``: Specify output file path. Default: same as input with .json extension  
 * ``-l, --language``: Specify language code for better accuracy. Auto-detect if not specified
 * ``-f, --format``: Output format - 'json' for structured data or 'txt' for readable text. Default: json
+* ``--boost``: Enable GPU acceleration for faster processing (requires CUDA-compatible GPU)
 * ``-v, --verbose``: Enable verbose output to see processing details
+
+**GPU Acceleration:**
+
+WhisperPy supports GPU acceleration for significantly faster processing:
+
+::
+
+    # Check if GPU acceleration is available
+    whipy gpu-status
+    
+    # Use GPU acceleration (much faster)
+    whipy transcribe --boost my_audio.mp3
+    
+    # GPU acceleration with larger model and verbose output
+    whipy transcribe --boost -m large -v my_audio.wav
+
+**Requirements for GPU acceleration:**
+- CUDA-compatible NVIDIA GPU
+- CUDA toolkit installed
+- PyTorch with CUDA support
 
 **Examples:**
 
@@ -113,14 +134,17 @@ Get your token from: https://huggingface.co/settings/tokens
     # Basic transcription with speaker identification (default behavior)
     whipy transcribe my_audio.mp3
     
-    # Use a larger model with JSON output (default)
-    whipy transcribe -m large my_audio.wav
+    # Use GPU acceleration for faster processing
+    whipy transcribe --boost my_audio.mp3
+    
+    # Use a larger model with GPU acceleration
+    whipy transcribe --boost -m large my_audio.wav
     
     # Save as text format instead of JSON
     whipy transcribe -f txt my_audio.mp3
     
-    # Specify output file and language
-    whipy transcribe -o transcript.json -l en my_audio.m4a
+    # Specify output file and language with GPU boost
+    whipy transcribe --boost -o transcript.json -l en my_audio.m4a
     
     # Verbose output to see what's happening
     whipy transcribe -v -m medium my_audio.flac

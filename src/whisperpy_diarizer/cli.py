@@ -13,6 +13,18 @@ def diar(args):
     return max(args, key=len)
 
 
+def check_gpu_availability() -> Tuple[bool, str]:
+    """Check if GPU is available and return status info."""
+    if torch.cuda.is_available():
+        device_name = torch.cuda.get_device_name()
+        memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        return True, f"CUDA: {device_name} ({memory_gb:.1f}GB)"
+    elif torch.backends.mps.is_available():
+        return True, "Apple Metal Performance Shaders (MPS)"
+    else:
+        return False, "No GPU acceleration available (CUDA or MPS)"
+
+
 def get_hf_token() -> str:
     """Get HuggingFace token from environment variable."""
     token = os.getenv('HUGGINGFACE_TOKEN')
@@ -25,16 +37,33 @@ def get_hf_token() -> str:
     return token
 
 
-def perform_diarization(audio_file: str, hf_token: str, verbose: bool = False) -> Dict[str, Any]:
+def perform_diarization(audio_file: str, hf_token: str, verbose: bool = False, use_gpu: bool = False) -> Dict[str, Any]:
     """Perform speaker diarization using pyannote.audio."""
     if verbose:
         click.echo("Loading speaker diarization pipeline...")
+        if use_gpu:
+            if torch.cuda.is_available():
+                click.echo("Using CUDA GPU acceleration for diarization...")
+            elif torch.backends.mps.is_available():
+                click.echo("⚠️  Apple Metal has compatibility issues with pyannote.audio, using CPU for diarization")
+                click.echo("    (Whisper will still use GPU acceleration)")
+            else:
+                click.echo("GPU requested but not available, falling back to CPU...")
     
     # Initialize the speaker diarization pipeline
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
         use_auth_token=hf_token
     )
+    
+    # Only use CUDA for diarization, not MPS due to compatibility issues
+    # MPS has known issues with sparse tensors used by pyannote.audio
+    if use_gpu and torch.cuda.is_available():
+        pipeline = pipeline.to(torch.device("cuda"))
+        if verbose:
+            click.echo("Successfully loaded diarization pipeline on CUDA GPU")
+    elif verbose and use_gpu:
+        click.echo("Keeping diarization pipeline on CPU for compatibility")
     
     # Run diarization
     if verbose:
@@ -146,8 +175,36 @@ def format_output_for_llm(segments: List[Dict], num_speakers: int) -> Dict[str, 
 
 @click.group()
 def cli():
-    """WhisperPy: Audio transcription with speaker diarization."""
+    """
+    WhisperPy: Audio transcription with speaker diarization.
+    
+    Use --boost flag for GPU acceleration (requires CUDA).
+    Check GPU status with: whipy gpu-status
+    """
     pass
+
+
+@cli.command()
+def gpu_status():
+    """Check GPU availability and status for acceleration."""
+    gpu_available, gpu_info = check_gpu_availability()
+    
+    if gpu_available:
+        click.echo(f"✅ GPU acceleration available: {gpu_info}")
+        click.echo("You can use --boost flag for faster processing")
+        
+        # Additional info for different GPU types
+        if "CUDA" in gpu_info:
+            click.echo("💡 NVIDIA CUDA GPU detected")
+        elif "MPS" in gpu_info:
+            click.echo("💡 Apple Silicon GPU detected (Metal Performance Shaders)")
+            click.echo("Note: Whisper uses GPU, but diarization may fall back to CPU due to compatibility")
+    else:
+        click.echo(f"❌ GPU acceleration not available: {gpu_info}")
+        click.echo("For GPU acceleration:")
+        click.echo("  • NVIDIA GPUs: Install CUDA-compatible PyTorch")
+        click.echo("  • Apple Silicon Macs: Install PyTorch with MPS support")
+        click.echo("Visit: https://pytorch.org/get-started/locally/")
 
 
 @cli.command()
@@ -272,7 +329,7 @@ def handle_simple_transcription(result: Dict, output: Path, verbose: bool):
 @cli.command()
 @click.argument('audio_file', type=click.Path(exists=True, readable=True))
 @click.option('--model', '-m', default='base', 
-              type=click.Choice(['tiny', 'base', 'small', 'medium', 'large', 'large-v2', 'large-v3']),
+              type=click.Choice(['tiny', 'base', 'small', 'medium', 'large', 'large-v2', 'large-v3', 'turbo']),
               help='Whisper model to use (default: base)')
 @click.option('--output', '-o', type=click.Path(), 
               help='Output file path (default: same as input with .json extension)')
@@ -280,8 +337,9 @@ def handle_simple_transcription(result: Dict, output: Path, verbose: bool):
               help='Language code (auto-detect if not specified)')
 @click.option('--format', '-f', type=click.Choice(['json', 'txt']), default='json',
               help='Output format (default: json)')
+@click.option('--boost', is_flag=True, help='Use GPU acceleration (CUDA/Apple Metal) for faster processing')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def transcribe(audio_file, model, output, language, format, verbose):
+def transcribe(audio_file, model, output, language, format, boost, verbose):
     """
     Transcribe audio files with speaker diarization using OpenAI Whisper and pyannote.audio.
     
@@ -289,14 +347,40 @@ def transcribe(audio_file, model, output, language, format, verbose):
     """
     if verbose:
         click.echo(f"Loading Whisper model: {model}")
+        if boost:
+            if torch.cuda.is_available():
+                click.echo("GPU acceleration enabled (CUDA)")
+                click.echo(f"Using device: {torch.cuda.get_device_name()}")
+            elif torch.backends.mps.is_available():
+                click.echo("GPU acceleration enabled (Apple Metal)")
+            else:
+                click.echo("GPU acceleration requested but not available, using CPU")
     
     try:
-        # Load and run Whisper
-        whisper_model = whisper.load_model(model)
-        if verbose:
-            click.echo(f"Transcribing: {audio_file}")
+        # Load and run Whisper with GPU support if requested
+        device = "cpu"  # default
+        if boost:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
         
-        result = whisper_model.transcribe(audio_file, language=language, verbose=False)
+        whisper_model = whisper.load_model(model, device=device)
+        
+        if verbose:
+            click.echo(f"Transcribing: {audio_file} (device: {device})")
+        
+        # Configure transcription options for GPU
+        transcribe_options = {
+            "language": language,
+            "verbose": False
+        }
+        
+        # Add GPU-specific optimizations if using CUDA
+        if device == "cuda":
+            transcribe_options["fp16"] = True  # Use half precision for faster GPU processing
+        
+        result = whisper_model.transcribe(audio_file, **transcribe_options)
         
         # Determine output file path
         if output is None:
@@ -315,7 +399,7 @@ def transcribe(audio_file, model, output, language, format, verbose):
         if verbose:
             click.echo("Performing speaker diarization...")
         
-        diarization_result = perform_diarization(audio_file, hf_token, verbose)
+        diarization_result = perform_diarization(audio_file, hf_token, verbose, use_gpu=boost)
         matched_segments = match_segments_with_speakers(result['segments'], diarization_result['speakers'])
         formatted_output = format_output_for_llm(matched_segments, diarization_result['num_speakers'])
         
@@ -324,9 +408,26 @@ def transcribe(audio_file, model, output, language, format, verbose):
             handle_diarization_output(formatted_output, Path(output), format, verbose)
         else:
             handle_simple_transcription(result, Path(output), verbose)
-        
+            
+    except torch.cuda.OutOfMemoryError:
+        click.echo("❌ GPU out of memory! Try:", err=True)
+        click.echo("  1. Use a smaller model (e.g., --model base)", err=True)
+        click.echo("  2. Run without --boost flag (CPU mode)", err=True)
+        click.echo("  3. Close other GPU applications", err=True)
+        sys.exit(1)
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
+        error_str = str(e)
+        if ("MPS" in error_str or "mps" in error_str or "Metal" in error_str or 
+              "SparseMPS" in error_str or "_sparse_coo_tensor" in error_str):
+            click.echo("❌ Apple Metal GPU compatibility issue detected", err=True)
+            click.echo("This is a known limitation with pyannote.audio on Apple Silicon", err=True)
+            click.echo("💡 Whisper still benefits from GPU acceleration", err=True)
+            click.echo("   Try running again - diarization will automatically use CPU", err=True)
+        elif "CUDA" in error_str or "cuda" in error_str:
+            click.echo(f"❌ CUDA GPU error: {e}", err=True)
+            click.echo("Try running without --boost flag for CPU mode", err=True)
+        else:
+            click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
