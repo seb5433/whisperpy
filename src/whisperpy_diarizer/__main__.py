@@ -9,7 +9,7 @@ Why does this file exist, and why __main__? For more info, read:
 - https://docs.python.org/3/using/cmdline.html#cmdoption-m
 """
 
-from whisperpy_diarizer.cli import run
+from whisperpy_diarizer.cli import cli
 
 if __name__ == "__main__":
-    run()
+    cli()

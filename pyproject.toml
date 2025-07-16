@@ -9,7 +9,7 @@ dynamic = [
     "readme",
 ]
 name = "whisperpy-diarizer"
-version = "0.0.0"
+version = "0.0.1"
 license = "MIT"
 license-files = ["LICENSE"]
 description = "Python speaker diarization with OpenAI Whisper ASR & pyannote.audio for accurate multi‑speaker transcription & labeling."
@@ -44,13 +44,16 @@ keywords = [
 ]
 requires-python = ">=3.9"
 dependencies = [
+    "openai-whisper",
+    "click",
+    "torch",
+    "torchaudio",
+    "pyannote.audio>=3.0.0",
 ]
-
-[project.optional-dependencies]
 # rst = ["docutils>=0.11"]
 
 [project.scripts]
-whipy = "whisperpy_diarizer.cli:run"
+whipy = "whisperpy_diarizer.cli:cli"
 
 [project.urls]
 "Sources" = "https://https://github.com/seb5433/whisperpy/seb5433/whisperpy"
